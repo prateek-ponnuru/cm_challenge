@@ -10,6 +10,7 @@ import pickle
 import base64
 import ast
 from enum import Enum
+import uwsgi
 
 
 application = Flask(__name__)
@@ -152,40 +153,44 @@ def get_model(model_id):
 def train_model(model_id):
     if request.method == 'POST':
 
-        # query the model
-        result = query_model(model_id)
-        if not result:
-            return "Model does not exist", 404
-
-        body = request.json
-        x = body.get('x', None)
-        y = body.get('y', None)
-
-        # check for missing parameters
-        if None in [x, y]:
-            return "Missing Parameters", 400
-
-        # check the feature vector dimension matches with the model to be trained
-        if len(x) != result['d']:
-            return "Dimension mismatch", 400
-        # convert the features to 2D vector
-        X = np.array(x).reshape((1, -1))
-
-        # check that given sample class is valid for the model to be trained
-        if y not in range(result['n_classes']):
-            return "Invalid Class Value", 400
-
-        # convert the class to 1D vector
-        y = np.array(y).reshape((1,))
-
-        clf = pickle.loads(result['model_bin'])
+        uwsgi.lock()
         try:
-            clf.partial_fit(X, y, classes=range(result['n_classes']))
-        except Exception as e:
-            return f"Error while training: {e}", 500
+            # query the model
+            result = query_model(model_id)
+            if not result:
+                return "Model does not exist", 404
 
-        # serialize the updated model to db, increment the `n_trained` value
-        update_model(model_id, pickle.dumps(clf), result['n_trained'] + 1)
+            body = request.json
+            x = body.get('x', None)
+            y = body.get('y', None)
+
+            # check for missing parameters
+            if None in [x, y]:
+                return "Missing Parameters", 400
+
+            # check the feature vector dimension matches with the model to be trained
+            if len(x) != result['d']:
+                return "Dimension mismatch", 400
+            # convert the features to 2D vector
+            X = np.array(x).reshape((1, -1))
+
+            # check that given sample class is valid for the model to be trained
+            if y not in range(result['n_classes']):
+                return "Invalid Class Value", 400
+
+            # convert the class to 1D vector
+            y = np.array(y).reshape((1,))
+
+            clf = pickle.loads(result['model_bin'])
+            try:
+                clf.partial_fit(X, y, classes=range(result['n_classes']))
+            except Exception as e:
+                return f"Error while training: {e}", 500
+
+            # serialize the updated model to db, increment the `n_trained` value
+            update_model(model_id, pickle.dumps(clf), result['n_trained'] + 1)
+        finally:
+            uwsgi.unlock()
 
         return jsonify({'status': 'success'})
 

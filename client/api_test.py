@@ -194,6 +194,45 @@ class ApiTestCase(unittest.TestCase):
             resp_models_ids = resp_model_id_groups[n_trained]
             assert sorted(resp_models_ids) == sorted(resp_models_ids)
 
+    def test_8_thread_safety(self):
+        """
+        test thread safety when training model through multiple workers
+        """
+        import threading
+
+        n = 100
+        d = 4
+        # create
+        resp = self._request('POST', '/models/', {
+            'model': 'SGDClassifier',
+            'params': {},
+            'd': d,
+            'n_classes': 2,
+        })
+        model_id = resp['id']
+
+        # train
+        def train(n, d, model_id):
+            X = numpy.random.randn(n, d)
+            W = numpy.random.randn(d)
+            Y = X.dot(W) > 0
+            for i in range(n):
+                self._request('POST', f'/models/{model_id}/train/', {
+                    'x': list(X[i, :]),
+                    'y': int(Y[i]),
+                })
+
+        # long running train
+        long_running = threading.Thread(target=train, args=(n, d, model_id))
+        long_running.start()
+        # a quick train step
+        train(1, d, model_id)
+        long_running.join()
+
+        # read
+        resp = self._request('GET', f'/models/{model_id}/')
+        assert resp['n_trained'] == n + 1
+
     @classmethod
     def _request(self, method, path, json=None):
         url = f'{self.HOST}{path}'
